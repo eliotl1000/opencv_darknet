@@ -20,8 +20,10 @@
 參考代碼：
 OpenCV 移動偵測:
 https://www.learnpythonwithrune.org/opencv-and-python-simple-noise-tolerant-motion-detector/
+
 Darknet YoloV4 物件偵測:
 https://github.com/AlexeyAB/darknet
+
 Darknet 官方提供的wieght權重檔，不適合用來辨識一般由下往下拍的監視器影像，需要蒐集監視器影像來重新訓練，才會有比較好的辨識結果。
 
 
