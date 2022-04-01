@@ -1,5 +1,6 @@
 # opencv_darknet
 想法:
+
 結合「OpenCV移動偵測」與「YoloV4物件偵測」過濾監視器畫面的內容
 
 「OpenCV移動偵測」優點：速度快，缺點：易受風吹草動，光影或其它環境因素的影響而出現假警報
@@ -10,6 +11,7 @@
 
 
 作法：
+
 利用「OpenCV移動偵測」簡單快速的特性，把大部份靜止不動的畫面過濾掉，剩下少數有動靜的畫面傳給「YoloV4物件偵測」進行檢查，若發現有人入鏡，自動存檔記錄下來。
 
 呼叫「YoloV4物件偵測」的頻率被設計成動態的，從每5張畫面偵測1次，到每12張偵測1次，避免過多的假警報造成不斷偵測無用的畫面，拖累系統效能；呼叫「YoloV4物件偵測」的結果也回饋給「OpenCV移動偵測」，動態調整「OpenCV移動偵測」的靈敏度。
@@ -25,7 +27,7 @@ https://www.learnpythonwithrune.org/opencv-and-python-simple-noise-tolerant-moti
 Darknet YoloV4 物件偵測:
 https://github.com/AlexeyAB/darknet
 
-Darknet 官方提供的wieght權重檔，不適合用來辨識一般由下往下拍的監視器影像，需要蒐集監視器影像來重新訓練，才會有比較好的辨識結果。
+Darknet 官方提供的wieght權重檔，不適合用來辨識一般由上往下拍的監視器影像，需要蒐集監視器影像來重新訓練，才會有比較好的辨識結果。
 
 
 安裝方式：
