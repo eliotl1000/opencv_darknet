@@ -225,7 +225,7 @@ def yolov4_detect(queue, thresh):
                     cv2.imwrite('motions/' + str(file_no)+'.jpg',frame)  
                     file_no += 1
             else:                                     
-                    interval += 0.20 #Both last and the latest detecctions failed, increase detection tnterval to decrease chaces of false alarms.
+                    interval += 0.20 #Both last and the latest detecctions failed, increase detection interval to decrease chances of false alarms.
 
         if args.out_filename is not None:
             if (last_detected == frame_no): # write video when target object is detected in current frame.
@@ -237,8 +237,54 @@ def yolov4_detect(queue, thresh):
     video.release()  
     print('yolov4 output video closed.')      
 
+def main_thread(raw_queue,width=928, height=480, scale_factor=3):
+    quit = False
+    frame_no = 0
+    last_time = time.time()
 
-def motion_detect(queue, width=928, height=480, scale_factor=3):
+    while not quit:
+        ret, frame = cap.read()
+        if not ret:                        
+            break
+
+        # Resize the frame
+        frame = cv2.resize(frame, (width, height))
+        # Step 1: Scale down to improve speed (only takes integer scale factors)
+        work_frame = cv2.resize(frame, (width // scale_factor, height // scale_factor))
+        # Step 2: Blur it and convert the frame to float32
+        work_frame = cv2.GaussianBlur(work_frame, (5, 5), 0)
+        work_frame_f32 = work_frame.astype('float32')             
+
+        raw_queue.put(frame_no)
+        raw_queue.put(frame) #raw frame
+        raw_queue.put(work_frame_f32) #cv2 processed frame
+
+        if frame_no < raw_queue.qsize():
+            fps = int(frame_no / (time.time() - last_time))       
+        else:
+            fps = int((frame_no-raw_queue.qsize()) / (time.time() - last_time))       
+
+        if (frame_no % video_fps) == 0:
+            text = "FPS:" + str(fps)            
+
+        frame_no += 1 
+
+        cv2.putText(frame, text, (10, 20), cv2.FONT_HERSHEY_PLAIN, 2, (0, 255, 0), 2)
+        cv2.putText(frame, 'read_out:'+str(raw_queue.qsize()), (260, 20), cv2.FONT_HERSHEY_PLAIN, 2, (0, 255, 0), 2)
+        cv2.putText(frame, 'motion_detect:'+str(frame_queue.qsize()), (560, 20), cv2.FONT_HERSHEY_PLAIN, 2, (0, 255, 0), 2)
+        cv2.imshow('Webcam', frame)      
+
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            quit = True              
+
+        while raw_queue.qsize() >= 300:
+            time.sleep(1/1000)            
+
+        frame_no += 1
+    
+    return quit
+
+def motion_detect(raw_queue, queue):
     # Create the buffer of our lists
     bg_frames = deque(maxlen=30)
     fg_frames = deque(maxlen=10)
@@ -248,9 +294,8 @@ def motion_detect(queue, width=928, height=480, scale_factor=3):
     #cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
     #cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)    
 
-    # We want to see how many frames per second we process
+    # We want to see how many frames per second we process    
     
-    frame_no = 0
     frame_cnt = 0    
     record_cnt = 0
     recording = False
@@ -258,24 +303,16 @@ def motion_detect(queue, width=928, height=480, scale_factor=3):
     skip = False
     quit = False    
     global interval
-    min_box = 49    
-    last_time = time.time()
+    min_box = 49        
     
     while not quit:
-        # Step 0: Read the webcam frame (ignore return code)          
-        ret, frame = cap.read()
-        if not ret:            
+        # Step 0: Read the webcam frame (ignore return code)        
+        frame_no = raw_queue.get()
+        if frame_no == -1:            
             break
-        
-        copy = np.copy(frame)       
-        
-        # Resize the frame
-        frame = cv2.resize(frame, (width, height))
-        # Step 1: Scale down to improve speed (only takes integer scale factors)
-        work_frame = cv2.resize(frame, (width // scale_factor, height // scale_factor))
-        # Step 2: Blur it and convert the frame to float32
-        work_frame = cv2.GaussianBlur(work_frame, (5, 5), 0)
-        work_frame_f32 = work_frame.astype('float32')       
+
+        frame = raw_queue.get()
+        work_frame_f32 = raw_queue.get()
              
         if interval < 5:
             min_box = 49
@@ -292,7 +329,7 @@ def motion_detect(queue, width=928, height=480, scale_factor=3):
                     frame_cnt = 0
             else:
                 #cv2.imwrite('motions/' + filename + str(file_no)+'.jpg',frame)            
-                video_out.write(copy)
+                video_out.write(frame)
                 #file_no += 1
                 skip = True
 
@@ -300,37 +337,18 @@ def motion_detect(queue, width=928, height=480, scale_factor=3):
             
         if recording:                  
             queue.put(frame_no) 
-            queue.put(copy)                                
+            queue.put(frame)                                
             record_cnt += 1            
             if record_cnt >= video_fps:
                 record_cnt = 0
                 recording = False
 
-        # Step 8: Draw all boxes (remember to scale back up)
-        #for x, y, w, h in boxes:
-        #    cv2.rectangle(frame, (x * scale_factor, y * scale_factor), ((x + w) * scale_factor, (y + h) * scale_factor),
-        #                  (0, 255, 0), 2)
-
-        # Add the Frames Per Second (FPS) and show frame
-        
-        fps = int(frame_no / (time.time() - last_time))                
-        if (frame_no % video_fps) == 0:
-            text = "FPS:" + str(fps)            
-
-        frame_no += 1 
-
-        cv2.putText(frame, text, (10, 20), cv2.FONT_HERSHEY_PLAIN, 2, (0, 255, 0), 2)
-        cv2.putText(frame, 'q:'+str(queue.qsize()), (160, 20), cv2.FONT_HERSHEY_PLAIN, 2, (0, 255, 0), 2)
-        cv2.imshow('Webcam', frame)        
-
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            quit = True               
-    
     return quit
 
 if __name__ == '__main__':
     
-    frame_queue = Queue()
+    raw_queue = Queue()
+    frame_queue = Queue()    
 
     args = parser()    
     check_arguments_errors(args)
@@ -345,6 +363,7 @@ if __name__ == '__main__':
     input_path = str2int(args.input)
     interval = 0
     first_time = True    
+    scale_factor = 3
 
     files = os.listdir(input_path)
     files.sort()    
@@ -361,22 +380,34 @@ if __name__ == '__main__':
 
         if first_time:        
             print('threh:',args.thresh)       
-            t1 = Thread(target=yolov4_detect, args=(frame_queue,args.thresh))
+            t1 = Thread(target=motion_detect, args=(raw_queue, frame_queue))
+            t2 = Thread(target=yolov4_detect, args=(frame_queue, args.thresh))
             t1.start()
+            t2.start()
             first_time = False
             video_out = set_saved_video(cap, 'motion_'+args.out_filename, (video_width, video_height))
 
-        quit = motion_detect(queue=frame_queue, width=video_width, height=video_height, scale_factor=3, )
+        quit = main_thread(raw_queue,video_width, video_height, scale_factor)
         cap.release()        
 
         if quit: # quit flag represents that user has pressed key 'q' in motion_detect() function.
             break        
 
+    while raw_queue.qsize() > 0 or frame_queue.qsize() > 0:
+        time.sleep(1/1000)
+
+    raw_queue.put(-1)
     frame_queue.put(-1)
-    video_out.release()
-    print('motion output video closed.')      
-    t1.join()
-    print('yolov4 thread joined.')      
+    
+    if len(files) > 0:
+        video_out.release()
+        print('motion output video closed.')      
+        t1.join()
+        t2.join()
+    else:
+        print('source folder is emtpy.')
+
+    print('All threads joined.')      
     cv2.destroyAllWindows()
 
     print('program exit.')
