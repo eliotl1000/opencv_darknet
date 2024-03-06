@@ -187,11 +187,11 @@ def yolov4_detect(queue, thresh):
     video = set_saved_video(cap, 'object_'+args.out_filename, (video_width, video_height))            
 
     while True:        
-        frame_no = queue.get()
+        (frame_no,frame) = queue.get()
         if frame_no == -1:
             break      
 
-        frame = queue.get()  
+        #frame = queue.get()  
 
         if last_frame_no > frame_no: #reset varilables when switching to a new video stream.
             last_frame_no = -1
@@ -242,7 +242,7 @@ def main_thread(raw_queue,width=928, height=480, scale_factor=3):
     frame_no = 0
     last_time = time.time()
 
-    while not quit:
+    while True:
         ret, frame = cap.read()
         if not ret:                        
             break
@@ -255,34 +255,40 @@ def main_thread(raw_queue,width=928, height=480, scale_factor=3):
         work_frame = cv2.GaussianBlur(work_frame, (5, 5), 0)
         work_frame_f32 = work_frame.astype('float32')             
 
-        raw_queue.put(frame_no)
-        raw_queue.put(frame) #raw frame
-        raw_queue.put(work_frame_f32) #cv2 processed frame
+        raw_queue.put((frame_no,frame,work_frame_f32)) #pack three varilables to be sent into a tuple
+        #raw_queue.put(frame) #raw frame
+        #raw_queue.put(work_frame_f32) #cv2 processed frame
 
-        if frame_no < raw_queue.qsize():
-            fps = int(frame_no / (time.time() - last_time))       
+        remaining = raw_queue.qsize()
+
+        if frame_no < remaining:
+            fps = int((frame_no+remaining-raw_queue.qsize()) / (time.time() - last_time))
         else:
-            fps = int((frame_no-raw_queue.qsize()) / (time.time() - last_time))       
+            fps = int((frame_no-remaining) / (time.time() - last_time))       
 
         if (frame_no % video_fps) == 0:
-            text = "FPS:" + str(fps)            
+            text = "raw:" + str(fps) + 'fps'           
 
         frame_no += 1 
 
         cv2.putText(frame, text, (10, 20), cv2.FONT_HERSHEY_PLAIN, 2, (0, 255, 0), 2)
-        cv2.putText(frame, 'read_out:'+str(raw_queue.qsize()), (260, 20), cv2.FONT_HERSHEY_PLAIN, 2, (0, 255, 0), 2)
-        cv2.putText(frame, 'motion_detect:'+str(frame_queue.qsize()), (560, 20), cv2.FONT_HERSHEY_PLAIN, 2, (0, 255, 0), 2)
+        cv2.putText(frame, 'motion:'+str(raw_queue.qsize())+'frames', (320, 20), cv2.FONT_HERSHEY_PLAIN, 2, (0, 255, 0), 2)
+        cv2.putText(frame, 'yolo:'+str(frame_queue.qsize())+'frames', (680, 20), cv2.FONT_HERSHEY_PLAIN, 2, (0, 255, 0), 2)
         cv2.imshow('Webcam', frame)      
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
-            quit = True              
+            quit = True         
+            break     
 
-        while raw_queue.qsize() >= 300:
+        while raw_queue.qsize() > 99:
             time.sleep(1/1000)            
 
         frame_no += 1
     
-    return quit
+    if quit:
+        return -1
+    else:
+        return frame_no
 
 def motion_detect(raw_queue, queue):
     # Create the buffer of our lists
@@ -307,12 +313,12 @@ def motion_detect(raw_queue, queue):
     
     while not quit:
         # Step 0: Read the webcam frame (ignore return code)        
-        frame_no = raw_queue.get()
-        if frame_no == -1:            
-            break
+        (frame_no,frame,work_frame_f32) = raw_queue.get()
+        #frame = raw_queue.get()
+        #work_frame_f32 = raw_queue.get()
 
-        frame = raw_queue.get()
-        work_frame_f32 = raw_queue.get()
+        if frame_no == -1:
+            break
              
         if interval < 5:
             min_box = 49
@@ -336,14 +342,17 @@ def motion_detect(raw_queue, queue):
             recording = True
             
         if recording:                  
-            queue.put(frame_no) 
-            queue.put(frame)                                
+            queue.put((frame_no,frame))
+            #queue.put(frame)                                
             record_cnt += 1            
             if record_cnt >= video_fps:
                 record_cnt = 0
                 recording = False
 
-    return quit
+        while queue.qsize() > 99: #to avoid jam in queue
+            time.sleep(1/1000)                          
+
+    queue.put((-1,None)) #inform yolo_detect() thread it's time to quit.
 
 if __name__ == '__main__':
     
@@ -367,6 +376,8 @@ if __name__ == '__main__':
 
     files = os.listdir(input_path)
     files.sort()    
+    total_frames = 0
+    start_time = time.time()
 
     for f in files:       
 #        filename = f.replace('192.168.1.99_','')                
@@ -387,17 +398,20 @@ if __name__ == '__main__':
             first_time = False
             video_out = set_saved_video(cap, 'motion_'+args.out_filename, (video_width, video_height))
 
-        quit = main_thread(raw_queue,video_width, video_height, scale_factor)
+        frames_by_file = main_thread(raw_queue,video_width, video_height, scale_factor)
+
         cap.release()        
 
-        if quit: # quit flag represents that user has pressed key 'q' in motion_detect() function.
-            break        
+        if frames_by_file == -1: # quit flag represents that user has pressed key 'q' in main_thread().
+            break            
 
-    while raw_queue.qsize() > 0 or frame_queue.qsize() > 0:
+        total_frames += frames_by_file                  
+
+
+    while raw_queue.qsize() > 0:
         time.sleep(1/1000)
 
-    raw_queue.put(-1)
-    frame_queue.put(-1)
+    raw_queue.put((-1,None,None))    
     
     if len(files) > 0:
         video_out.release()
@@ -410,4 +424,4 @@ if __name__ == '__main__':
     print('All threads joined.')      
     cv2.destroyAllWindows()
 
-    print('program exit.')
+    print('Overall fps:',total_frames // (time.time()-start_time))
